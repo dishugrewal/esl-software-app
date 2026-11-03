@@ -1,73 +1,22 @@
-name: Build ESL Software APK & Windows App
+name: esl_software_app
+description: ESL Software Native App - Made by Dishu Grewal
+publish_to: 'none'
+version: 2.0.0+2
 
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+environment:
+  sdk: '>=3.2.0 <4.0.0'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.1
+  shared_preferences: ^2.2.3
+  flutter_blue_plus: ^1.32.12
+  permission_handler: ^11.3.1
 
-jobs:
-  build_android_apk:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.3'
-          channel: 'stable'
-
-      - name: Generate Android Folder Without Overwriting Code
-        run: |
-          cp pubspec.yaml pubspec.bak
-          cp lib/main.dart main.bak
-          flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android
-          mv pubspec.bak pubspec.yaml
-          mv main.bak lib/main.dart
-          rm -rf test
-
-      - name: Inject Permissions & Fix Gradle SDK
-        python3 -c '
-import os
-p = "android/app/src/main/AndroidManifest.xml"
-s = open(p).read()
-perms = """<uses-permission android:name="android.permission.INTERNET"/>
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
-<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-<uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
-<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-<application android:usesCleartextTraffic="true" """
-s = s.replace("<application", perms, 1).replace("esl_software_app", "ESL Software")
-open(p, "w").write(s)
-' || true
-        run: |
-          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"\/><uses-permission android:name="android.permission.BLUETOOTH_SCAN"\/><uses-permission android:name="android.permission.BLUETOOTH_CONNECT"\/><application android:usesCleartextTraffic="true"/g' android/app/src/main/AndroidManifest.xml
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle || true
-
-      - name: Get Flutter Dependencies
-        run: flutter pub get
-
-      - name: Build Release APK
-        run: flutter build apk --release --no-tree-shake-icons
-
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ESL-Software-Android-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+flutter:
+  uses-material-design: true
