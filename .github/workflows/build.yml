@@ -1,4 +1,4 @@
-name: Build ESL Software Android APK
+name: Build ESL Software Android APK & Windows EXE
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
@@ -20,25 +20,143 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.24.3'
           channel: 'stable'
 
-      - name: Generate Android Platform Structure
-        run: flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android
-
-      - name: Set minSdkVersion to 21
+      - name: Backup Custom Dart & Pubspec Files
         run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
+          cp pubspec.yaml /tmp/pubspec.yaml.bak
+          cp lib/main.dart /tmp/main.dart.bak
 
-      - name: Install dependencies
+      - name: Generate Android Platform Structure
+        run: |
+          rm -rf test
+          flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android
+
+      - name: Restore Custom Dart & Pubspec Files
+        run: |
+          cp /tmp/pubspec.yaml.bak pubspec.yaml
+          cp /tmp/main.dart.bak lib/main.dart
+          rm -rf test
+
+      - name: Configure Android Permissions & SDK Versions
+        run: |
+          cat << 'EOF' > android/app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+              <application
+                  android:label="ESL Software"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
+              </application>
+          </manifest>
+          EOF
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle || true
+
+      - name: Install Flutter Dependencies
         run: flutter pub get
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release -v
 
-      - name: Upload APK Artifact
+      - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ESL-Software-Android-APK
           path: build/app/outputs/flutter-apk/app-release.apk
+
+  build_windows_exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11 for Standalone EXE Packaging
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create Standalone Windows App & Native BLE Engine
+        shell: cmd
+        run: |
+          pip install pyinstaller bleak flask flask-cors
+          echo import os, sys, threading, asyncio, base64, webbrowser > esl_pc_app.py
+          echo from flask import Flask, request, jsonify >> esl_pc_app.py
+          echo from flask_cors import CORS >> esl_pc_app.py
+          echo from bleak import BleakClient >> esl_pc_app.py
+          echo CHAR_UUID = "0000fff5-0000-1000-8000-00805f9b34fb" >> esl_pc_app.py
+          echo PACKET_SIZE = 200 >> esl_pc_app.py
+          echo app = Flask(__name__) >> esl_pc_app.py
+          echo CORS(app) >> esl_pc_app.py
+          echo @app.after_request >> esl_pc_app.py
+          echo def add_cors(r): >> esl_pc_app.py
+          echo     r.headers["Access-Control-Allow-Origin"] = "*" >> esl_pc_app.py
+          echo     r.headers["Access-Control-Allow-Headers"] = "*" >> esl_pc_app.py
+          echo     r.headers["Access-Control-Allow-Methods"] = "*" >> esl_pc_app.py
+          echo     r.headers["Access-Control-Allow-Private-Network"] = "true" >> esl_pc_app.py
+          echo     return r >> esl_pc_app.py
+          echo async def send_ble(mac, data): >> esl_pc_app.py
+          echo     for attempt in range(1, 4): >> esl_pc_app.py
+          echo         try: >> esl_pc_app.py
+          echo             async with BleakClient(mac, timeout=20.0) as client: >> esl_pc_app.py
+          echo                 for i in range(0, len(data), PACKET_SIZE): >> esl_pc_app.py
+          echo                     await client.write_gatt_char(CHAR_UUID, data[i:i+PACKET_SIZE], response=False) >> esl_pc_app.py
+          echo                     await asyncio.sleep(0.008) >> esl_pc_app.py
+          echo                 await asyncio.sleep(1.2) >> esl_pc_app.py
+          echo             return True >> esl_pc_app.py
+          echo         except Exception as e: >> esl_pc_app.py
+          echo             last_e = e >> esl_pc_app.py
+          echo             await asyncio.sleep(0.8) >> esl_pc_app.py
+          echo     raise last_e >> esl_pc_app.py
+          echo @app.route("/ping", methods=["GET", "OPTIONS"]) >> esl_pc_app.py
+          echo def ping(): return jsonify({"status": "ok", "app": "ESL Software Made by Dishu Grewal"}) >> esl_pc_app.py
+          echo @app.route("/sync", methods=["POST", "OPTIONS"]) >> esl_pc_app.py
+          echo def sync(): >> esl_pc_app.py
+          echo     if request.method == "OPTIONS": return jsonify({"status": "ok"}) >> esl_pc_app.py
+          echo     d = request.get_json(force=True) >> esl_pc_app.py
+          echo     try: >> esl_pc_app.py
+          echo         asyncio.run(send_ble(d.get("mac","").strip().upper(), base64.b64decode(d.get("payloadBase64","")))) >> esl_pc_app.py
+          echo         return jsonify({"success": True}) >> esl_pc_app.py
+          echo     except Exception as e: >> esl_pc_app.py
+          echo         return jsonify({"success": False, "error": str(e)}), 500 >> esl_pc_app.py
+          echo if __name__ == "__main__": >> esl_pc_app.py
+          echo     print("==========================================================") >> esl_pc_app.py
+          echo     print("  ESL SOFTWARE DESKTOP APP - MADE BY DISHU GREWAL") >> esl_pc_app.py
+          echo     print("  Zero-Popup Bluetooth Engine Active on Port 8765") >> esl_pc_app.py
+          echo     print("==========================================================") >> esl_pc_app.py
+          echo     threading.Timer(1.5, lambda: os.system('start msedge --app=https://esl.rankorax.digital/index.php || start chrome --app=https://esl.rankorax.digital/index.php')).start() >> esl_pc_app.py
+          echo     app.run(host="127.0.0.1", port=8765) >> esl_pc_app.py
+          pyinstaller --onefile --name "ESL_Software_Desktop" esl_pc_app.py
+
+      - name: Upload Windows Standalone EXE Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESL-Software-Windows-PC-EXE
+          path: dist/ESL_Software_Desktop.exe
