@@ -30,8 +30,8 @@ jobs:
 
       - name: Generate Android Platform Structure
         run: |
-          rm -rf test
-          flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android
+          rm -rf android test
+          flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android --android-language java
 
       - name: Restore Custom Dart & Pubspec Files
         run: |
@@ -39,7 +39,7 @@ jobs:
           cp /tmp/main.dart.bak lib/main.dart
           rm -rf test
 
-      - name: Configure Android Permissions & SDK Versions
+      - name: Configure AndroidManifest.xml & Force compileSdk 35
         run: |
           cat << 'EOF' > android/app/src/main/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -76,16 +76,53 @@ jobs:
               </application>
           </manifest>
           EOF
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
-          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
-          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle || true
+
+          cat << 'EOF' > android/app/build.gradle
+          plugins {
+              id "com.android.application"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+
+          android {
+              namespace = "com.dishugrewal.esl_software_app"
+              compileSdk = 35
+              ndkVersion = flutter.ndkVersion
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              defaultConfig {
+                  applicationId = "com.dishugrewal.esl_software_app"
+                  minSdk = 23
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0.0"
+              }
+
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.debug
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+              }
+          }
+
+          flutter {
+              source = "../.."
+          }
+          EOF
 
       - name: Install Flutter Dependencies
         run: flutter pub get
 
-      - name: Build Release APK
-        run: flutter build apk --release -v
+      - name: Analyze Dart Code for Any Errors
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build Release APK (No Tree Shake Icons)
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
