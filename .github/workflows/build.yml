@@ -1,125 +1,73 @@
-name: Build ESL Software Native Android APK & Windows Desktop App
+name: Build ESL Software APK & Windows App
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build_android_apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '17'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.3'
           channel: 'stable'
 
-      - name: Backup App Files
+      - name: Generate Android Folder Without Overwriting Code
         run: |
-          cp pubspec.yaml /tmp/pubspec.yaml.bak
-          cp lib/main.dart /tmp/main.dart.bak
-
-      - name: Create Android Project Structure
-        run: |
-          rm -rf android test
+          cp pubspec.yaml pubspec.bak
+          cp lib/main.dart main.bak
           flutter create . --org com.dishugrewal --project-name esl_software_app --platforms=android
-
-      - name: Restore App Files
-        run: |
-          cp /tmp/pubspec.yaml.bak pubspec.yaml
-          cp /tmp/main.dart.bak lib/main.dart
+          mv pubspec.bak pubspec.yaml
+          mv main.bak lib/main.dart
           rm -rf test
 
-      - name: Add Android Bluetooth Permissions & SDK 21
+      - name: Inject Permissions & Fix Gradle SDK
+        python3 -c '
+import os
+p = "android/app/src/main/AndroidManifest.xml"
+s = open(p).read()
+perms = """<uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+<uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+<application android:usesCleartextTraffic="true" """
+s = s.replace("<application", perms, 1).replace("esl_software_app", "ESL Software")
+open(p, "w").write(s)
+' || true
         run: |
-          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"\/><uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"\/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"\/><uses-permission android:name="android.permission.BLUETOOTH_SCAN"\/><uses-permission android:name="android.permission.BLUETOOTH_CONNECT"\/><application android:usesCleartextTraffic="true"/g' android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:label="esl_software_app"/android:label="ESL Software"/g' android/app/src/main/AndroidManifest.xml
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/><uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"\/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"\/><uses-permission android:name="android.permission.BLUETOOTH_SCAN"\/><uses-permission android:name="android.permission.BLUETOOTH_CONNECT"\/><application android:usesCleartextTraffic="true"/g' android/app/src/main/AndroidManifest.xml
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/g' android/app/build.gradle || true
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/g' android/app/build.gradle || true
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 34/g' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 34/g' android/app/build.gradle || true
 
-      - name: Get Flutter Packages
+      - name: Get Flutter Dependencies
         run: flutter pub get
 
-      - name: Build Android Release APK
+      - name: Build Release APK
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: ESL-Software-Native-Android-APK
+          name: ESL-Software-Android-APK
           path: build/app/outputs/flutter-apk/app-release.apk
-
-  build_windows_gui_app:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Build Native Windows GUI Application (No Console Window)
-        shell: cmd
-        run: |
-          pip install pyinstaller pywebview bleak flask flask-cors
-          echo import os, sys, threading, asyncio, base64, webview > esl_win_gui.py
-          echo from flask import Flask, request, jsonify >> esl_win_gui.py
-          echo from flask_cors import CORS >> esl_win_gui.py
-          echo from bleak import BleakClient >> esl_win_gui.py
-          echo CHAR_UUID = "0000fff5-0000-1000-8000-00805f9b34fb" >> esl_win_gui.py
-          echo PACKET_SIZE = 200 >> esl_win_gui.py
-          echo app = Flask(__name__) >> esl_win_gui.py
-          echo CORS(app) >> esl_win_gui.py
-          echo @app.after_request >> esl_win_gui.py
-          echo def add_cors(r): >> esl_win_gui.py
-          echo     r.headers["Access-Control-Allow-Origin"] = "*" >> esl_win_gui.py
-          echo     r.headers["Access-Control-Allow-Headers"] = "*" >> esl_win_gui.py
-          echo     r.headers["Access-Control-Allow-Methods"] = "*" >> esl_win_gui.py
-          echo     r.headers["Access-Control-Allow-Private-Network"] = "true" >> esl_win_gui.py
-          echo     return r >> esl_win_gui.py
-          echo async def send_ble(mac, data): >> esl_win_gui.py
-          echo     for attempt in range(1, 4): >> esl_win_gui.py
-          echo         try: >> esl_win_gui.py
-          echo             async with BleakClient(mac, timeout=20.0) as client: >> esl_win_gui.py
-          echo                 for i in range(0, len(data), PACKET_SIZE): >> esl_win_gui.py
-          echo                     await client.write_gatt_char(CHAR_UUID, data[i:i+PACKET_SIZE], response=False) >> esl_win_gui.py
-          echo                     await asyncio.sleep(0.008) >> esl_win_gui.py
-          echo                 await asyncio.sleep(1.2) >> esl_win_gui.py
-          echo             return True >> esl_win_gui.py
-          echo         except Exception as e: >> esl_win_gui.py
-          echo             last_e = e >> esl_win_gui.py
-          echo             await asyncio.sleep(0.8) >> esl_win_gui.py
-          echo     raise last_e >> esl_win_gui.py
-          echo @app.route("/ping", methods=["GET", "OPTIONS"]) >> esl_win_gui.py
-          echo def ping(): return jsonify({"status": "ok", "app": "ESL Software Made by Dishu Grewal"}) >> esl_win_gui.py
-          echo @app.route("/sync", methods=["POST", "OPTIONS"]) >> esl_win_gui.py
-          echo def sync(): >> esl_win_gui.py
-          echo     if request.method == "OPTIONS": return jsonify({"status": "ok"}) >> esl_win_gui.py
-          echo     d = request.get_json(force=True) >> esl_win_gui.py
-          echo     try: >> esl_win_gui.py
-          echo         asyncio.run(send_ble(d.get("mac","").strip().upper(), base64.b64decode(d.get("payloadBase64","")))) >> esl_win_gui.py
-          echo         return jsonify({"success": True}) >> esl_win_gui.py
-          echo     except Exception as e: >> esl_win_gui.py
-          echo         return jsonify({"success": False, "error": str(e)}), 500 >> esl_win_gui.py
-          echo if __name__ == "__main__": >> esl_win_gui.py
-          echo     t = threading.Thread(target=lambda: app.run(host="127.0.0.1", port=8765, use_reloader=False), daemon=True) >> esl_win_gui.py
-          echo     t.start() >> esl_win_gui.py
-          echo     webview.create_window("ESL Software - Made by Dishu Grewal", "https://esl.rankorax.digital/index.php", width=1360, height=840, min_size=(1024, 680)) >> esl_win_gui.py
-          echo     webview.start() >> esl_win_gui.py
-          pyinstaller --noconsole --onedir --name "ESL_Software" esl_win_gui.py
-
-      - name: Upload Native Windows GUI App
-        uses: actions/upload-artifact@v4
-        with:
-          name: ESL-Software-Windows-GUI-App
-          path: dist/ESL_Software/
