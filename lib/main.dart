@@ -11,8 +11,6 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 const String API_BASE = "https://esl.rankorax.digital/includes/api.php";
-const String SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb";
-const String CHAR_UUID = "0000fff5-0000-1000-8000-00805f9b34fb";
 const int PACKET_SIZE = 200;
 
 void main() async {
@@ -45,9 +43,6 @@ class EslNativeApp extends StatelessWidget {
   }
 }
 
-// =========================================================================
-// 1. NATIVE LOGIN & LICENSE CHECK SCREEN
-// =========================================================================
 class AuthGateScreen extends StatefulWidget {
   const AuthGateScreen({super.key});
 
@@ -254,9 +249,6 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
   }
 }
 
-// =========================================================================
-// 2. MAIN NATIVE DASHBOARD (PLATES, STUDIO TEMPLATES, MAC MANAGER)
-// =========================================================================
 class MainDashboardScreen extends StatefulWidget {
   final String username;
   final String password;
@@ -289,7 +281,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
   final TextEditingController _rangeToCtrl = TextEditingController(text: "5");
   final TextEditingController _clearTextCtrl = TextEditingController(text: "PMI IT");
 
-  // Add MAC Form Controllers
   final TextEditingController _macPlateNoCtrl = TextEditingController(text: "1");
   final TextEditingController _macAddrCtrl = TextEditingController();
   final TextEditingController _macNameCtrl = TextEditingController();
@@ -411,9 +402,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     }
   }
 
-  // =========================================================================
-  // 800x480 NATIVE CANVAS RENDERER & 192,000 BYTES BWRY PAYLOAD GENERATOR
-  // =========================================================================
   Future<Uint8List> _generateDualDdsPayload(Map<String, dynamic> plate) async {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, 800, 480));
@@ -463,9 +451,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     return totalPayload;
   }
 
-  // =========================================================================
-  // ZERO-POPUP DIRECT MAC BLE SYNC ENGINE
-  // =========================================================================
   Future<bool> _syncSinglePlateBle(int index) async {
     final plate = _plates[index];
     final String mac = (plate['mac'] ?? '').toString().trim().toUpperCase();
@@ -497,15 +482,8 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
           _statusBanner = "Attempt $attempt/3: Locking MAC $mac (Plate #$plateNo)...";
         });
 
-        if (Platform.isWindows) {
-          // On Windows, perform a quick 2.5s scan if device isn't cached yet
-          await FlutterBluePlus.startScan(timeout: const Duration(milliseconds: 2500));
-          await Future.delayed(const Duration(milliseconds: 2600));
-          await FlutterBluePlus.stopScan();
-        }
-
         device = BluetoothDevice.fromId(mac);
-        await device.connect(timeout: const Duration(seconds: 18), autoConnect: false, mtu: null);
+        await device.connect(timeout: const Duration(seconds: 18), autoConnect: false);
 
         if (Platform.isAndroid) {
           try {
@@ -702,7 +680,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
       ),
       body: Column(
         children: [
-          // Live Status & Progress Bar Banner
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -746,7 +723,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
               ],
             ),
           ),
-
           Expanded(
             child: _loadingDb
                 ? const Center(child: CircularProgressIndicator())
@@ -782,13 +758,9 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     );
   }
 
-  // =========================================================================
-  // TAB 1: NATIVE PLATES EDITOR, RANGE SELECTOR & SYNC
-  // =========================================================================
   Widget _buildPlatesTab(int selectedCount) {
     return Column(
       children: [
-        // Top Action & Range Control Bar
         Container(
           padding: const EdgeInsets.all(12),
           decoration: const BoxDecoration(
@@ -851,16 +823,10 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
-                          contentPadding: EdgeInsets.zero,
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration: const InputDecoration(contentPadding: EdgeInsets.zero, border: OutlineInputBorder()),
                       ),
                     ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 4),
-                      child: Text("to", style: TextStyle(fontSize: 12)),
-                    ),
+                    const Padding(padding: EdgeInsets.symmetric(horizontal: 4), child: Text("to", style: TextStyle(fontSize: 12))),
                     SizedBox(
                       width: 44,
                       height: 32,
@@ -869,10 +835,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                         keyboardType: TextInputType.number,
                         textAlign: TextAlign.center,
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
-                          contentPadding: EdgeInsets.zero,
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration: const InputDecoration(contentPadding: EdgeInsets.zero, border: OutlineInputBorder()),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -887,10 +850,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                       child: TextField(
                         controller: _clearTextCtrl,
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 8), border: OutlineInputBorder()),
                       ),
                     ),
                     const SizedBox(width: 4),
@@ -905,7 +865,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
             ],
           ),
         ),
-
         Expanded(
           child: _plates.isEmpty
               ? const Center(child: Text("No plates registered. Add plates in Tab 3."))
@@ -933,7 +892,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // Card Header
                             Row(
                               children: [
                                 Checkbox(
@@ -942,14 +900,8 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 ),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF0F172A),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    "Plate #${p['plateNo']}",
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12),
-                                  ),
+                                  decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
+                                  child: Text("Plate #${p['plateNo']}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 12)),
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -976,8 +928,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 ),
                               ],
                             ),
-
-                            // Per-Plate Template Dropdown
                             Container(
                               margin: const EdgeInsets.symmetric(vertical: 8),
                               padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1008,34 +958,21 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 ),
                               ),
                             ),
-
-                            // Live 800x480 Hardware Preview
                             Container(
                               padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFCBD5E1),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                              decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(12)),
                               child: AspectRatio(
                                 aspectRatio: 800 / 480,
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(6),
-                                  child: CustomPaint(
-                                    painter: EinkPlatePainter(plate: p, template: tpl),
-                                  ),
+                                  child: CustomPaint(painter: EinkPlatePainter(plate: p, template: tpl)),
                                 ),
                               ),
                             ),
                             const SizedBox(height: 10),
-
-                            // Name, Designation, Project Fields
                             TextFormField(
                               initialValue: (p['name'] ?? '').toString(),
-                              decoration: const InputDecoration(
-                                labelText: "Full Name",
-                                isDense: true,
-                                border: OutlineInputBorder(),
-                              ),
+                              decoration: const InputDecoration(labelText: "Full Name", isDense: true, border: OutlineInputBorder()),
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               onChanged: (val) {
                                 setState(() {
@@ -1051,11 +988,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 Expanded(
                                   child: TextFormField(
                                     initialValue: (p['designation'] ?? '').toString(),
-                                    decoration: const InputDecoration(
-                                      labelText: "Designation",
-                                      isDense: true,
-                                      border: OutlineInputBorder(),
-                                    ),
+                                    decoration: const InputDecoration(labelText: "Designation", isDense: true, border: OutlineInputBorder()),
                                     style: const TextStyle(fontSize: 12),
                                     onChanged: (val) => setState(() => p['designation'] = val),
                                     onEditingComplete: _saveWorkspaceToServer,
@@ -1065,11 +998,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 Expanded(
                                   child: TextFormField(
                                     initialValue: (p['project'] ?? '').toString(),
-                                    decoration: const InputDecoration(
-                                      labelText: "Project / Location",
-                                      isDense: true,
-                                      border: OutlineInputBorder(),
-                                    ),
+                                    decoration: const InputDecoration(labelText: "Project / Location", isDense: true, border: OutlineInputBorder()),
                                     style: const TextStyle(fontSize: 12),
                                     onChanged: (val) => setState(() => p['project'] = val),
                                     onEditingComplete: _saveWorkspaceToServer,
@@ -1078,8 +1007,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                               ],
                             ),
                             const SizedBox(height: 10),
-
-                            // Save & Direct BLE Sync Buttons
                             Row(
                               children: [
                                 OutlinedButton.icon(
@@ -1112,9 +1039,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     );
   }
 
-  // =========================================================================
-  // TAB 2: STUDIO TEMPLATES SELECTOR & FONT CUSTOMIZER
-  // =========================================================================
   Widget _buildTemplatesTab() {
     final activeTpl = _templates.firstWhere(
       (t) => t['id'].toString() == _activeTemplateId,
@@ -1124,10 +1048,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text(
-          "Select Default Template or Apply to All Plates",
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
-        ),
+        const Text("Select Default Template or Apply to All Plates", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
         const SizedBox(height: 10),
         ..._templates.map((t) {
           final bool isSel = t['id'].toString() == _activeTemplateId;
@@ -1144,9 +1065,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                       },
                       child: const Text("Select"),
                     ),
-              onTap: () {
-                setState(() => _activeTemplateId = t['id'].toString());
-              },
+              onTap: () => setState(() => _activeTemplateId = t['id'].toString()),
             ),
           );
         }),
@@ -1163,18 +1082,12 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
           },
           icon: const Icon(Icons.format_paint, color: Colors.white),
           label: const Text("Apply Selected Template to ALL Plates", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2563EB),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), padding: const EdgeInsets.symmetric(vertical: 14)),
         ),
       ],
     );
   }
 
-  // =========================================================================
-  // TAB 3: MAC ADDRESS MANAGER
-  // =========================================================================
   Widget _buildMacManagerTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1203,11 +1116,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                       flex: 2,
                       child: TextField(
                         controller: _macAddrCtrl,
-                        decoration: const InputDecoration(
-                          labelText: "MAC (E4:52:1E:E5:66:4F)",
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
+                        decoration: const InputDecoration(labelText: "MAC (E4:52:1E:E5:66:4F)", border: OutlineInputBorder(), isDense: true),
                       ),
                     ),
                   ],
@@ -1304,9 +1213,6 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
   }
 }
 
-// =========================================================================
-// 3. NATIVE 800x480 E-INK HARDWARE PAINTER
-// =========================================================================
 class EinkPlatePainter extends CustomPainter {
   final Map<String, dynamic> plate;
   final Map<String, dynamic> template;
