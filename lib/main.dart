@@ -4,13 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:universal_ble/universal_ble.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-// =========================================================================
-// LIVE PORTAL URL (CONNECTED TO ESL.RANKORAX.DIGITAL)
-// =========================================================================
 const String PORTAL_URL   = "https://esl.rankorax.digital/index.php";
 const String SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb";
 const String CHAR_UUID    = "0000fff5-0000-1000-8000-00805f9b34fb";
@@ -31,7 +28,7 @@ class EslSoftwareApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ESL Software — Made by Dishu Grewal',
+      title: 'ESL Software',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
@@ -51,7 +48,7 @@ class EslPortalScreen extends StatefulWidget {
 }
 
 class _EslPortalScreenState extends State<EslPortalScreen> {
-  InAppWebViewController? _webViewController;
+  late final WebViewController _controller;
   bool _isLoading = true;
   bool _isSyncingBle = false;
   int _syncProgressPct = 0;
@@ -60,10 +57,11 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
   @override
   void initState() {
     super.initState();
-    _initBlePermissions();
+    _initPermissions();
+    _initWebView();
   }
 
-  Future<void> _initBlePermissions() async {
+  Future<void> _initPermissions() async {
     if (Platform.isAndroid) {
       await [
         Permission.bluetooth,
@@ -71,18 +69,89 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
         Permission.bluetoothConnect,
         Permission.locationWhenInUse,
       ].request();
+
+      try {
+        if (await FlutterBluePlus.isSupported) {
+          final state = await FlutterBluePlus.adapterState.first;
+          if (state != BluetoothAdapterState.on) {
+            await FlutterBluePlus.turnOn();
+          }
+        }
+      } catch (_) {}
     }
   }
 
-  // =========================================================================
-  // UNIVERSAL DIRECT-MAC BLE SYNC (WORKS ON ANDROID APK & WINDOWS EXE!)
-  // =========================================================================
+  void _initWebView() {
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF0F172A))
+      ..addJavaScriptChannel(
+        'ESLAndroidChannel',
+        onMessageReceived: (JavaScriptMessage message) async {
+          try {
+            final Map<String, dynamic> data = jsonDecode(message.message);
+            final String reqId = (data['reqId'] ?? '').toString();
+            final String mac = (data['mac'] ?? '').toString();
+            final int plateNo = int.tryParse((data['plateNo'] ?? '1').toString()) ?? 1;
+            final String payloadBase64 = (data['payloadBase64'] ?? '').toString();
+
+            final Map<String, dynamic> res = await _syncPayloadToMac(
+              macAddress: mac,
+              plateNo: plateNo,
+              payloadBase64: payloadBase64,
+            );
+
+            final String resJson = jsonEncode(res);
+            await _controller.runJavaScript(
+              "if(window.__eslResolve && window.__eslResolve['$reqId']) { window.__eslResolve['$reqId']($resJson); delete window.__eslResolve['$reqId']; }",
+            );
+          } catch (e) {
+            final String errStr = jsonEncode({"success": false, "error": e.toString()});
+            await _controller.runJavaScript(
+              "if(window.__eslResolve) { Object.values(window.__eslResolve).forEach(fn => fn($errStr)); window.__eslResolve = {}; }",
+            );
+          }
+        },
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) => setState(() => _isLoading = true),
+          onPageFinished: (_) async {
+            setState(() => _isLoading = false);
+            // Inject Native Bridge Polyfill so existing assets/app.js works seamlessly!
+            await _controller.runJavaScript('''
+              window.ESLNativeApp = true;
+              window.__eslResolve = window.__eslResolve || {};
+              window.flutter_inappwebview = {
+                callHandler: function(handlerName, payloadObj) {
+                  return new Promise(function(resolve) {
+                    var reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2);
+                    window.__eslResolve[reqId] = resolve;
+                    ESLAndroidChannel.postMessage(JSON.stringify({
+                      reqId: reqId,
+                      mac: payloadObj.mac,
+                      plateNo: payloadObj.plateNo,
+                      payloadBase64: payloadObj.payloadBase64
+                    }));
+                  });
+                }
+              };
+              if (typeof checkLocalSilentBridge === 'function') {
+                checkLocalSilentBridge(false);
+              }
+            ''');
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(PORTAL_URL));
+  }
+
   Future> _syncPayloadToMac({
     required String macAddress,
     required int plateNo,
     required String payloadBase64,
   }) async {
-    final cleanMac = macAddress.trim().toUpperCase();
+    final String cleanMac = macAddress.trim().toUpperCase();
     final Uint8List payloadBytes = base64Decode(payloadBase64);
     final int totalBytes = payloadBytes.length;
     final int totalPackets = (totalBytes + PACKET_SIZE - 1) ~/ PACKET_SIZE;
@@ -93,37 +162,53 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
       _syncOverlayStatus = "Connecting to Plate #$plateNo ($cleanMac)...";
     });
 
+    BluetoothDevice? device;
     Exception? lastErr;
 
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         setState(() {
-          _syncOverlayStatus = "Attempt $attempt/3: Connecting to $cleanMac...";
+          _syncOverlayStatus = "Attempt $attempt/3: Locking MAC $cleanMac...";
         });
 
-        await UniversalBle.connect(cleanMac);
-        await Future.delayed(const Duration(milliseconds: 400));
+        device = BluetoothDevice.fromId(cleanMac);
+
+        await device.connect(
+          timeout: const Duration(seconds: 18),
+          autoConnect: false,
+          mtu: null,
+        );
 
         if (Platform.isAndroid) {
           try {
-            await UniversalBle.requestMtu(cleanMac, 247);
+            await device.requestMtu(247);
           } catch (_) {}
         }
 
-        await UniversalBle.discoverServices(cleanMac);
+        final List<BluetoothService> services = await device.discoverServices();
+        BluetoothCharacteristic? targetChar;
+
+        for (final BluetoothService srv in services) {
+          if (srv.uuid.toString().toLowerCase().contains("fff0")) {
+            for (final BluetoothCharacteristic c in srv.characteristics) {
+              if (c.uuid.toString().toLowerCase().contains("fff5")) {
+                targetChar = c;
+                break;
+              }
+            }
+          }
+        }
+
+        if (targetChar == null) {
+          throw Exception("Characteristic fff5 not found on $cleanMac");
+        }
 
         for (int pkt = 0; pkt < totalPackets; pkt++) {
           final int start = pkt * PACKET_SIZE;
           final int end = (start + PACKET_SIZE < totalBytes) ? (start + PACKET_SIZE) : totalBytes;
-          final Uint8List chunk = payloadBytes.sublist(start, end);
+          final List<int> chunk = payloadBytes.sublist(start, end);
 
-          await UniversalBle.writeValue(
-            cleanMac,
-            SERVICE_UUID,
-            CHAR_UUID,
-            chunk,
-            BleOutputProperty.withoutResponse,
-          );
+          await targetChar.write(chunk, withoutResponse: true);
 
           if ((pkt + 1) % 40 == 0 || pkt == totalPackets - 1) {
             final int pct = (((pkt + 1) / totalPackets) * 100).round();
@@ -137,7 +222,7 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
         }
 
         await Future.delayed(const Duration(milliseconds: 1200));
-        await UniversalBle.disconnect(cleanMac);
+        await device.disconnect();
 
         setState(() {
           _isSyncingBle = false;
@@ -148,7 +233,7 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
       } catch (e) {
         lastErr = Exception(e.toString());
         try {
-          await UniversalBle.disconnect(cleanMac);
+          await device?.disconnect();
         } catch (_) {}
         await Future.delayed(const Duration(milliseconds: 800));
       }
@@ -166,115 +251,94 @@ class _EslPortalScreenState extends State<EslPortalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri(PORTAL_URL)),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                allowFileAccess: true,
-                allowContentAccess: true,
-                mediaPlaybackRequiresUserGesture: false,
-                mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
-                userAgent: "ESLSoftwareNativeApp/1.0 (Made by Dishu Grewal)",
-              ),
-              onWebViewCreated: (controller) {
-                _webViewController = controller;
-                controller.addJavaScriptHandler(
-                  handlerName: 'nativeMacSync',
-                  callback: (args) async {
-                    if (args.isEmpty || args[0] is! Map) {
-                      return {"success": false, "error": "Invalid sync payload"};
-                    }
-                    final Map data = args[0] as Map;
-                    return await _syncPayloadToMac(
-                      macAddress: (data['mac'] ?? '').toString(),
-                      plateNo: int.tryParse((data['plateNo'] ?? '1').toString()) ?? 1,
-                      payloadBase64: (data['payloadBase64'] ?? '').toString(),
-                    );
-                  },
-                );
-              },
-              onLoadStart: (controller, url) => setState(() => _isLoading = true),
-              onLoadStop: (controller, url) async {
-                setState(() => _isLoading = false);
-                await controller.evaluateJavascript(
-                  source: "window.ESLNativeApp = true; if(typeof checkLocalSilentBridge === 'function') checkLocalSilentBridge(false);",
-                );
-              },
-            ),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (bool didPop) async {
+        if (didPop) return;
+        if (await _controller.canGoBack()) {
+          await _controller.goBack();
+        }
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Stack(
+            children: [
+              WebViewWidget(controller: _controller),
 
-            if (_isLoading)
-              Container(
-                color: const Color(0xFF0F172A),
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: Color(0xFF3B82F6)),
-                      SizedBox(height: 16),
-                      Text("ESL Software", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900)),
-                      SizedBox(height: 4),
-                      Text("Made by Dishu Grewal", style: TextStyle(color: Color(0xFF60A5FA), fontSize: 12, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-
-            if (_isSyncingBle)
-              Positioned(
-                top: 12,
-                left: 16,
-                right: 16,
-                child: Material(
-                  elevation: 10,
-                  borderRadius: BorderRadius.circular(16),
+              if (_isLoading)
+                Container(
                   color: const Color(0xFF0F172A),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF3B82F6), width: 1.5),
-                    ),
+                  child: const Center(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _syncOverlayStatus,
-                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            Text(
-                              "$_syncProgressPct%",
-                              style: const TextStyle(color: Color(0xFF34D399), fontSize: 13, fontWeight: FontWeight.w900),
-                            ),
-                          ],
+                        CircularProgressIndicator(color: Color(0xFF3B82F6)),
+                        SizedBox(height: 16),
+                        Text(
+                          "ESL Software",
+                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
                         ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: LinearProgressIndicator(
-                            value: _syncProgressPct / 100.0,
-                            minHeight: 6,
-                            backgroundColor: const Color(0xFF1E293B),
-                            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
-                          ),
+                        SizedBox(height: 4),
+                        Text(
+                          "Made by Dishu Grewal",
+                          style: TextStyle(color: Color(0xFF60A5FA), fontSize: 12, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                   ),
                 ),
-              ),
-          ],
+
+              if (_isSyncingBle)
+                Positioned(
+                  top: 12,
+                  left: 16,
+                  right: 16,
+                  child: Material(
+                    elevation: 10,
+                    borderRadius: BorderRadius.circular(16),
+                    color: const Color(0xFF0F172A),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF3B82F6), width: 1.5),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _syncOverlayStatus,
+                                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text(
+                                "$_syncProgressPct%",
+                                style: const TextStyle(color: Color(0xFF34D399), fontSize: 13, fontWeight: FontWeight.w900),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: _syncProgressPct / 100.0,
+                              minHeight: 6,
+                              backgroundColor: const Color(0xFF1E293B),
+                              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF3B82F6)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
